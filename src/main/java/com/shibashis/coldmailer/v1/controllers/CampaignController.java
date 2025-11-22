@@ -1,6 +1,7 @@
 package com.shibashis.coldmailer.v1.controllers;
 
 import com.shibashis.coldmailer.v1.dto.CampaignCreateRequest;
+import com.shibashis.coldmailer.v1.dto.CampaignFromTextRequest;
 import com.shibashis.coldmailer.v1.dto.CampaignStatsDTO;
 import com.shibashis.coldmailer.v1.models.Campaign;
 import com.shibashis.coldmailer.v1.services.CampaignService;
@@ -26,6 +27,12 @@ public class CampaignController {
     @PostMapping
     public ResponseEntity<Campaign> createCampaign(@Valid @RequestBody CampaignCreateRequest request) {
         Campaign savedCampaign = campaignService.createCampaign(request);
+        return new ResponseEntity<>(savedCampaign, HttpStatus.CREATED);
+    }
+
+    @PostMapping("/from-text")
+    public ResponseEntity<Campaign> createCampaignFromText(@Valid @RequestBody CampaignFromTextRequest request) {
+        Campaign savedCampaign = campaignService.createCampaignFromText(request);
         return new ResponseEntity<>(savedCampaign, HttpStatus.CREATED);
     }
 

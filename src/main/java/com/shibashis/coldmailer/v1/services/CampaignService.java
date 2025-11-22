@@ -1,6 +1,7 @@
 package com.shibashis.coldmailer.v1.services;
 
 import com.shibashis.coldmailer.v1.dto.CampaignCreateRequest;
+import com.shibashis.coldmailer.v1.dto.CampaignFromTextRequest;
 import com.shibashis.coldmailer.v1.dto.CampaignStatsDTO;
 import com.shibashis.coldmailer.v1.dto.ProspectData;
 import com.shibashis.coldmailer.v1.models.Campaign;
@@ -24,10 +25,14 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList; // Added this import
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
@@ -41,7 +46,7 @@ public class CampaignService {
     private final CampaignProspectRepository campaignProspectRepository;
     private final EmailService emailService;
     private final TemplateRenderer templateRenderer;
-    private final ProspectDerivationService prospectDerivationService; // Added this field
+    private final ProspectDerivationService prospectDerivationService;
 
     @Value("${app.base-url:http://localhost:8080}")
     private String baseUrl;
@@ -54,14 +59,14 @@ public class CampaignService {
             CampaignProspectRepository campaignProspectRepository,
             EmailService emailService,
             TemplateRenderer templateRenderer,
-            ProspectDerivationService prospectDerivationService) { // Added to constructor
+            ProspectDerivationService prospectDerivationService) {
         this.campaignRepository = campaignRepository;
         this.emailTemplateRepository = emailTemplateRepository;
         this.prospectRepository = prospectRepository;
         this.campaignProspectRepository = campaignProspectRepository;
         this.emailService = emailService;
         this.templateRenderer = templateRenderer;
-        this.prospectDerivationService = prospectDerivationService; // Set the field
+        this.prospectDerivationService = prospectDerivationService;
     }
 
     public List<Campaign> getAllCampaigns() {
@@ -74,11 +79,20 @@ public class CampaignService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid Template ID"));
 
         List<Prospect> prospectsForCampaign = new ArrayList<>();
-        if (request.getEmailAddresses() != null && !request.getEmailAddresses().isEmpty()) { // Check for empty list
-            for (String emailAddress : request.getEmailAddresses()) {
+        if (request.getEmailAddresses() != null && !request.getEmailAddresses().isEmpty()) {
+            
+            Set<String> uniqueEmails = new HashSet<>(request.getEmailAddresses());
+            int skippedCount = request.getEmailAddresses().size() - uniqueEmails.size();
+            
+            for (String emailAddress : uniqueEmails) {
+                if (emailAddress == null || !Pattern.matches("^[\\w-_\\.+]*[\\w-_.]@([\\w]+\\.)+[\\w]+[\\w]$", emailAddress)) {
+                    logger.warn("Skipping invalid email format: {}", emailAddress);
+                    skippedCount++;
+                    continue;
+                }
+
                 Prospect prospect = prospectRepository.findByEmail(emailAddress)
                         .orElseGet(() -> {
-                            // Prospect does not exist, derive data and create a new one
                             ProspectData derivedData = prospectDerivationService.deriveFromEmail(emailAddress);
                             Prospect newProspect = new Prospect();
                             newProspect.setEmail(emailAddress);
@@ -90,11 +104,8 @@ public class CampaignService {
                 prospectsForCampaign.add(prospect);
             }
         } else {
-             // Handle case where emailAddresses list is null or empty if needed,
-             // e.g., throw an exception or create a campaign with no prospects
              throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email addresses list cannot be empty.");
         }
-
 
         Campaign campaign = new Campaign();
         campaign.setName(request.getName());
@@ -110,6 +121,21 @@ public class CampaignService {
     }
     
     @Transactional
+    public Campaign createCampaignFromText(CampaignFromTextRequest textRequest) {
+        List<String> emails = Arrays.stream(textRequest.getEmailListAsText().split("\\R"))
+                .map(String::trim)
+                .filter(line -> !line.isEmpty())
+                .collect(Collectors.toList());
+
+        CampaignCreateRequest createRequest = new CampaignCreateRequest();
+        createRequest.setName(textRequest.getName());
+        createRequest.setTemplateId(textRequest.getTemplateId());
+        createRequest.setEmailAddresses(emails);
+
+        return createCampaign(createRequest);
+    }
+
+    @Transactional
     public Campaign startCampaign(Long id) {
         Campaign campaign = campaignRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Campaign not found"));
@@ -117,13 +143,15 @@ public class CampaignService {
         campaign.setStatus(CampaignStatus.RUNNING);
         Campaign savedCampaign = campaignRepository.save(campaign);
 
-        runCampaign(savedCampaign); // Fire-and-forget async method
+        runCampaign(savedCampaign);
 
         return savedCampaign;
     }
 
     @Async
     public void runCampaign(Campaign campaign) {
+        int successfulSends = 0;
+        int failedSends = 0;
         try {
             logger.info("Starting execution for campaign ID: {}", campaign.getId());
             EmailTemplate template = campaign.getTemplate();
@@ -133,7 +161,6 @@ public class CampaignService {
                 try {
                     logger.info("Sending email to {} for campaign ID: {}", prospect.getEmail(), campaign.getId());
 
-                    // Prepare variables for Thymeleaf
                     Map<String, Object> variables = new HashMap<>();
                     variables.put("firstName", prospect.getFirstName());
                     variables.put("lastName", prospect.getLastName());
@@ -141,21 +168,21 @@ public class CampaignService {
                     variables.put("company", prospect.getCompany());
 
                     String renderedBody = templateRenderer.render(template.getBody(), variables);
-                    String bodyWithTracker = renderedBody + String.format("<img src=\"%%s/api/track/open/%%s\" width=\"1\" height=\"1\" />", baseUrl, campaignProspect.getOpenTrackedToken());
+                    String bodyWithTracker = renderedBody + String.format("<img src=\"%s/api/track/open/%s\" width=\"1\" height=\"1" />", baseUrl, campaignProspect.getOpenTrackedToken());
 
                     emailService.sendHtmlMessage(prospect.getEmail(), template.getSubject(), bodyWithTracker);
 
                     campaignProspect.setSentAt(LocalDateTime.now());
                     campaignProspectRepository.save(campaignProspect);
+                    successfulSends++;
 
                     Thread.sleep(30000);
                 } catch (MessagingException e) {
+                    failedSends++;
                     logger.error("Failed to send email to {} for campaign ID: {}. Error: {}", prospect.getEmail(), campaign.getId(), e.getMessage());
-                    // Optionally, update campaignProspect with an error status here
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     logger.error("Email sending thread interrupted for campaign ID: {}", campaign.getId(), e);
-                    // Breaking the loop as the thread is interrupted
                     break;
                 }
             }
@@ -166,6 +193,8 @@ public class CampaignService {
             logger.error("Campaign ID: {} failed with an unexpected error.", campaign.getId(), e);
             campaign.setStatus(CampaignStatus.FAILED);
         } finally {
+            String summary = String.format("Process complete. Sent: %d. Failed: %d. Total prospects in campaign: %d.", successfulSends, failedSends, campaign.getCampaignProspects().size());
+            campaign.setProcessingDetails(summary);
             campaignRepository.save(campaign);
         }
     }

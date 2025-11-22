@@ -34,6 +34,8 @@ public class Campaign {
     
     private LocalDateTime scheduledTime;
 
+    private String processingDetails;
+
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
