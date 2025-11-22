@@ -2,6 +2,7 @@ package com.shibashis.coldmailer.v1.services;
 
 import com.shibashis.coldmailer.v1.dto.CampaignCreateRequest;
 import com.shibashis.coldmailer.v1.dto.CampaignStatsDTO;
+import com.shibashis.coldmailer.v1.dto.ProspectData;
 import com.shibashis.coldmailer.v1.models.Campaign;
 import com.shibashis.coldmailer.v1.models.CampaignProspect;
 import com.shibashis.coldmailer.v1.models.EmailTemplate;
@@ -23,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList; // Added this import
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,38 +41,66 @@ public class CampaignService {
     private final CampaignProspectRepository campaignProspectRepository;
     private final EmailService emailService;
     private final TemplateRenderer templateRenderer;
+    private final ProspectDerivationService prospectDerivationService; // Added this field
 
     @Value("${app.base-url:http://localhost:8080}")
     private String baseUrl;
 
     @Autowired
-    public CampaignService(CampaignRepository campaignRepository, EmailTemplateRepository emailTemplateRepository, ProspectRepository prospectRepository, CampaignProspectRepository campaignProspectRepository, EmailService emailService, TemplateRenderer templateRenderer) {
+    public CampaignService(
+            CampaignRepository campaignRepository,
+            EmailTemplateRepository emailTemplateRepository,
+            ProspectRepository prospectRepository,
+            CampaignProspectRepository campaignProspectRepository,
+            EmailService emailService,
+            TemplateRenderer templateRenderer,
+            ProspectDerivationService prospectDerivationService) { // Added to constructor
         this.campaignRepository = campaignRepository;
         this.emailTemplateRepository = emailTemplateRepository;
         this.prospectRepository = prospectRepository;
         this.campaignProspectRepository = campaignProspectRepository;
         this.emailService = emailService;
         this.templateRenderer = templateRenderer;
+        this.prospectDerivationService = prospectDerivationService; // Set the field
     }
 
     public List<Campaign> getAllCampaigns() {
         return campaignRepository.findAll();
     }
 
+    @Transactional
     public Campaign createCampaign(CampaignCreateRequest request) {
         EmailTemplate template = emailTemplateRepository.findById(request.getTemplateId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid Template ID"));
 
-        List<Prospect> prospects = prospectRepository.findAllById(request.getProspectIds());
-        if (prospects.size() != request.getProspectIds().size()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "One or more invalid Prospect IDs");
+        List<Prospect> prospectsForCampaign = new ArrayList<>();
+        if (request.getEmailAddresses() != null && !request.getEmailAddresses().isEmpty()) { // Check for empty list
+            for (String emailAddress : request.getEmailAddresses()) {
+                Prospect prospect = prospectRepository.findByEmail(emailAddress)
+                        .orElseGet(() -> {
+                            // Prospect does not exist, derive data and create a new one
+                            ProspectData derivedData = prospectDerivationService.deriveFromEmail(emailAddress);
+                            Prospect newProspect = new Prospect();
+                            newProspect.setEmail(emailAddress);
+                            newProspect.setFirstName(derivedData.getFirstName());
+                            newProspect.setLastName(derivedData.getLastName());
+                            newProspect.setCompany(derivedData.getCompanyName());
+                            return prospectRepository.save(newProspect);
+                        });
+                prospectsForCampaign.add(prospect);
+            }
+        } else {
+             // Handle case where emailAddresses list is null or empty if needed,
+             // e.g., throw an exception or create a campaign with no prospects
+             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email addresses list cannot be empty.");
         }
+
 
         Campaign campaign = new Campaign();
         campaign.setName(request.getName());
         campaign.setTemplate(template);
 
-        List<CampaignProspect> campaignProspects = prospects.stream()
+        List<CampaignProspect> campaignProspects = prospectsForCampaign.stream()
                 .map(prospect -> new CampaignProspect(campaign, prospect))
                 .collect(Collectors.toList());
         
@@ -78,7 +108,7 @@ public class CampaignService {
 
         return campaignRepository.save(campaign);
     }
-
+    
     @Transactional
     public Campaign startCampaign(Long id) {
         Campaign campaign = campaignRepository.findById(id)
@@ -111,7 +141,7 @@ public class CampaignService {
                     variables.put("company", prospect.getCompany());
 
                     String renderedBody = templateRenderer.render(template.getBody(), variables);
-                    String bodyWithTracker = renderedBody + String.format("<img src=\"%s/api/track/open/%s\" width=\"1\" height=\"1\" />", baseUrl, campaignProspect.getOpenTrackedToken());
+                    String bodyWithTracker = renderedBody + String.format("<img src=\"%%s/api/track/open/%%s\" width=\"1\" height=\"1\" />", baseUrl, campaignProspect.getOpenTrackedToken());
 
                     emailService.sendHtmlMessage(prospect.getEmail(), template.getSubject(), bodyWithTracker);
 

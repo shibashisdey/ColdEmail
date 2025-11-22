@@ -15,6 +15,5 @@ public class CampaignCreateRequest {
     @NotNull(message = "Template ID is mandatory")
     private Long templateId;
 
-    @NotNull(message = "Prospect IDs list is mandatory")
-    private List<Long> prospectIds;
+    private List<String> emailAddresses; // Changed from prospectIds
 }
