@@ -28,6 +28,7 @@ public class Campaign {
     private EmailTemplate template;
 
     @OneToMany(mappedBy = "campaign", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    @JsonManagedReference
     private List<CampaignProspect> campaignProspects = new ArrayList<>();
 
     private LocalDateTime createdAt;

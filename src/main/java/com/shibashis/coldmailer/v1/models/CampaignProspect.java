@@ -1,5 +1,6 @@
 package com.shibashis.coldmailer.v1.models;
 
+import com.fasterxml.jackson.annotation.JsonBackReference;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -18,6 +19,7 @@ public class CampaignProspect {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "campaign_id", nullable = false)
+    @JsonBackReference
     private Campaign campaign;
 
     @ManyToOne(fetch = FetchType.LAZY)

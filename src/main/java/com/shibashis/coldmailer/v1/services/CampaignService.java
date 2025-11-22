@@ -140,6 +140,10 @@ public class CampaignService {
         Campaign campaign = campaignRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Campaign not found"));
 
+        if (campaign.getStatus() != CampaignStatus.DRAFT && campaign.getStatus() != CampaignStatus.PAUSED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Campaign cannot be started as it is already " + campaign.getStatus());
+        }
+
         campaign.setStatus(CampaignStatus.RUNNING);
         Campaign savedCampaign = campaignRepository.save(campaign);
 
@@ -168,7 +172,12 @@ public class CampaignService {
                     variables.put("company", prospect.getCompany());
 
                     String renderedBody = templateRenderer.render(template.getBody(), variables);
-                    String bodyWithTracker = renderedBody + String.format("<img src=\"%s/api/track/open/%s\" width=\"1\" height=\"1" />", baseUrl, campaignProspect.getOpenTrackedToken());
+                    String bodyWithTracker = renderedBody + String.format(
+                            "<img src='%s/api/track/open/%s' width='1' height='1' style='display:none;'/>",
+                            baseUrl,
+                            campaignProspect.getOpenTrackedToken()
+                    );
+
 
                     emailService.sendHtmlMessage(prospect.getEmail(), template.getSubject(), bodyWithTracker);
 
