@@ -1,0 +1,163 @@
+package com.shibashis.coldmailer.v1.services;
+
+import com.shibashis.coldmailer.v1.dto.CampaignCreateRequest;
+import com.shibashis.coldmailer.v1.dto.CampaignStatsDTO;
+import com.shibashis.coldmailer.v1.models.Campaign;
+import com.shibashis.coldmailer.v1.models.CampaignProspect;
+import com.shibashis.coldmailer.v1.models.EmailTemplate;
+import com.shibashis.coldmailer.v1.models.Prospect;
+import com.shibashis.coldmailer.v1.models.enums.CampaignStatus;
+import com.shibashis.coldmailer.v1.repositories.CampaignProspectRepository;
+import com.shibashis.coldmailer.v1.repositories.CampaignRepository;
+import com.shibashis.coldmailer.v1.repositories.EmailTemplateRepository;
+import com.shibashis.coldmailer.v1.repositories.ProspectRepository;
+import jakarta.mail.MessagingException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+@Service
+public class CampaignService {
+
+    private static final Logger logger = LoggerFactory.getLogger(CampaignService.class);
+
+    private final CampaignRepository campaignRepository;
+    private final EmailTemplateRepository emailTemplateRepository;
+    private final ProspectRepository prospectRepository;
+    private final CampaignProspectRepository campaignProspectRepository;
+    private final EmailService emailService;
+    private final TemplateRenderer templateRenderer;
+
+    @Value("${app.base-url:http://localhost:8080}")
+    private String baseUrl;
+
+    @Autowired
+    public CampaignService(CampaignRepository campaignRepository, EmailTemplateRepository emailTemplateRepository, ProspectRepository prospectRepository, CampaignProspectRepository campaignProspectRepository, EmailService emailService, TemplateRenderer templateRenderer) {
+        this.campaignRepository = campaignRepository;
+        this.emailTemplateRepository = emailTemplateRepository;
+        this.prospectRepository = prospectRepository;
+        this.campaignProspectRepository = campaignProspectRepository;
+        this.emailService = emailService;
+        this.templateRenderer = templateRenderer;
+    }
+
+    public List<Campaign> getAllCampaigns() {
+        return campaignRepository.findAll();
+    }
+
+    public Campaign createCampaign(CampaignCreateRequest request) {
+        EmailTemplate template = emailTemplateRepository.findById(request.getTemplateId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid Template ID"));
+
+        List<Prospect> prospects = prospectRepository.findAllById(request.getProspectIds());
+        if (prospects.size() != request.getProspectIds().size()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "One or more invalid Prospect IDs");
+        }
+
+        Campaign campaign = new Campaign();
+        campaign.setName(request.getName());
+        campaign.setTemplate(template);
+
+        List<CampaignProspect> campaignProspects = prospects.stream()
+                .map(prospect -> new CampaignProspect(campaign, prospect))
+                .collect(Collectors.toList());
+        
+        campaign.setCampaignProspects(campaignProspects);
+
+        return campaignRepository.save(campaign);
+    }
+
+    @Transactional
+    public Campaign startCampaign(Long id) {
+        Campaign campaign = campaignRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Campaign not found"));
+
+        campaign.setStatus(CampaignStatus.RUNNING);
+        Campaign savedCampaign = campaignRepository.save(campaign);
+
+        runCampaign(savedCampaign); // Fire-and-forget async method
+
+        return savedCampaign;
+    }
+
+    @Async
+    public void runCampaign(Campaign campaign) {
+        try {
+            logger.info("Starting execution for campaign ID: {}", campaign.getId());
+            EmailTemplate template = campaign.getTemplate();
+
+            for (CampaignProspect campaignProspect : campaign.getCampaignProspects()) {
+                Prospect prospect = campaignProspect.getProspect();
+                try {
+                    logger.info("Sending email to {} for campaign ID: {}", prospect.getEmail(), campaign.getId());
+
+                    // Prepare variables for Thymeleaf
+                    Map<String, Object> variables = new HashMap<>();
+                    variables.put("firstName", prospect.getFirstName());
+                    variables.put("lastName", prospect.getLastName());
+                    variables.put("email", prospect.getEmail());
+                    variables.put("company", prospect.getCompany());
+
+                    String renderedBody = templateRenderer.render(template.getBody(), variables);
+                    String bodyWithTracker = renderedBody + String.format("<img src=\"%s/api/track/open/%s\" width=\"1\" height=\"1\" />", baseUrl, campaignProspect.getOpenTrackedToken());
+
+                    emailService.sendHtmlMessage(prospect.getEmail(), template.getSubject(), bodyWithTracker);
+
+                    campaignProspect.setSentAt(LocalDateTime.now());
+                    campaignProspectRepository.save(campaignProspect);
+
+                    Thread.sleep(30000);
+                } catch (MessagingException e) {
+                    logger.error("Failed to send email to {} for campaign ID: {}. Error: {}", prospect.getEmail(), campaign.getId(), e.getMessage());
+                    // Optionally, update campaignProspect with an error status here
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    logger.error("Email sending thread interrupted for campaign ID: {}", campaign.getId(), e);
+                    // Breaking the loop as the thread is interrupted
+                    break;
+                }
+            }
+
+            campaign.setStatus(CampaignStatus.COMPLETED);
+            logger.info("Campaign ID: {} completed.", campaign.getId());
+        } catch (Exception e) {
+            logger.error("Campaign ID: {} failed with an unexpected error.", campaign.getId(), e);
+            campaign.setStatus(CampaignStatus.FAILED);
+        } finally {
+            campaignRepository.save(campaign);
+        }
+    }
+
+    public Campaign pauseCampaign(Long id) {
+        Campaign campaign = campaignRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Campaign not found"));
+
+        campaign.setStatus(CampaignStatus.PAUSED);
+        return campaignRepository.save(campaign);
+    }
+
+    public CampaignStatsDTO getCampaignStats(Long id) {
+        Campaign campaign = campaignRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Campaign not found"));
+
+        List<CampaignProspect> campaignProspects = campaign.getCampaignProspects();
+        long totalProspects = campaignProspects.size();
+        long sentCount = campaignProspects.stream().filter(cp -> cp.getSentAt() != null).count();
+        long openCount = campaignProspects.stream().filter(cp -> cp.getOpenedAt() != null).count();
+        long clickCount = campaignProspects.stream().filter(cp -> cp.getClickedAt() != null).count();
+
+        return new CampaignStatsDTO(totalProspects, sentCount, openCount, clickCount);
+    }
+}
