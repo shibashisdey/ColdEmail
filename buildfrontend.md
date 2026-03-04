@@ -38,7 +38,7 @@ Create `.env` in frontend:
 API client defaults:
 - `baseURL = VITE_API_BASE_URL`
 - attach JWT in `Authorization: Bearer <token>`
-- global interceptor for `401` -> clear auth and redirect `/login`
+- global interceptor for `401` -> clear auth and redirect `/login` (or `/admin/login` for admin routes)
 
 Backend CORS requirement:
 - Ensure backend property includes frontend origin:
@@ -59,8 +59,12 @@ Protected routes:
 - `/campaigns/:id`
 - `/campaigns/:id/contacts`
 - `/campaigns/:id/progress`
+- `/admin/dashboard`
 - `/admin/hr-contacts`
 - `/admin/failed-emails`
+- `/admin/users`
+- `/admin/email-accounts`
+- `/admin/settings`
 
 Recommended nested layout:
 - `AppLayout` with sidebar/topbar + auth guard
@@ -229,6 +233,50 @@ Polling strategy:
 - poll every 5-10 seconds while status is `RUNNING`
 - stop polling when `COMPLETED` or `FAILED`
 - allow manual refresh button
+
+## 5.10 Admin Console (Separate Dashboard)
+Admin login:
+- route: `/admin/login`
+- API: `POST /api/auth/admin/login`
+
+Admin dashboard:
+- route: `/admin/dashboard`
+- APIs:
+  - `GET /api/admin/stats`
+  - `GET /api/admin/worker-health`
+- render:
+  - platform totals (users/campaigns/contacts/sent/opened/failed)
+  - rates (open/click/failure)
+  - queue depth + worker/redis health
+
+Admin HR contacts:
+- route: `/admin/hr-contacts`
+- API: `GET /api/admin/hr-contacts?q=...`
+- render searchable contact list
+
+Admin failed emails:
+- route: `/admin/failed-emails`
+- API: `GET /api/admin/failed-emails`
+- render failure reason + retry diagnostics
+
+Admin user management:
+- route: `/admin/users`
+- APIs:
+  - `GET /api/admin/users`
+  - `PATCH /api/admin/users/{id}/status`
+  - `DELETE /api/admin/users/{id}`
+
+Admin SMTP account management:
+- route: `/admin/email-accounts`
+- APIs:
+  - `GET /api/admin/email-accounts`
+  - `PATCH /api/admin/email-accounts/{id}/status`
+
+Admin platform settings:
+- route: `/admin/settings`
+- APIs:
+  - `GET /api/admin/settings`
+  - `PATCH /api/admin/settings`
 
 ## 6. API Contract Summary
 

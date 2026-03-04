@@ -6,6 +6,7 @@ import com.shibashis.coldmailer.v1.models.Contact;
 import com.shibashis.coldmailer.v1.models.EmailAccount;
 import com.shibashis.coldmailer.v1.models.User;
 import com.shibashis.coldmailer.v1.models.enums.CampaignContactStatus;
+import com.shibashis.coldmailer.v1.queue.EmailJobQueueService;
 import com.shibashis.coldmailer.v1.repositories.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
