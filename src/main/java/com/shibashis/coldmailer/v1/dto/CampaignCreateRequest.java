@@ -2,18 +2,24 @@ package com.shibashis.coldmailer.v1.dto;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
 
-import java.util.List;
-
-@Data
+@Getter
+@Setter
 public class CampaignCreateRequest {
 
-    @NotBlank(message = "Campaign name is mandatory")
+    @NotBlank
     private String name;
 
-    @NotNull(message = "Template ID is mandatory")
-    private Long templateId;
+    @NotBlank
+    private String subject;
 
-    private List<String> emailAddresses; // Changed from prospectIds
+    @NotBlank
+    private String templateBody;
+
+    @NotNull
+    private Long emailAccountId;
+
+    private boolean loadBalancedDispatch = false;
 }

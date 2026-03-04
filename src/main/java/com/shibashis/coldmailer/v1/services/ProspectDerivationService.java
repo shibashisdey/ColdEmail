@@ -13,12 +13,14 @@ import java.util.regex.Pattern;
 @Service
 public class ProspectDerivationService {
 
-    // Generic first names or mailbox names that should be replaced with "there"
+    private static final String GENERIC_LABEL = "Generic";
+
+    // Generic mailbox names that should not be treated as real people names
     private static final Set<String> GENERIC_NAMES = new HashSet<>(Arrays.asList(
             "info", "contact", "hello", "sales", "support", "admin", "noreply", "marketing"
     ));
 
-    // Generic email providers / company domains that should result in no company name
+    // Generic email providers / mailbox domains that should not be treated as real company names
     private static final Set<String> GENERIC_DOMAINS = new HashSet<>(Arrays.asList(
             "gmail", "yahoo", "outlook", "hotmail", "aol", "icloud", "zoho", "protonmail", "mail"
     ));
@@ -38,25 +40,28 @@ public class ProspectDerivationService {
         String localPart = matcher.group(1).toLowerCase(Locale.ROOT);
         String domainPart = matcher.group(2).toLowerCase(Locale.ROOT);
 
-        // 1. Derive First Name and Last Name
-        if (GENERIC_NAMES.contains(localPart)) {
-            firstName = "there"; // Fallback for generic names
+        // 1. Derive First Name and Last Name (email-first)
+        String normalizedLocalPart = localPart.replace("-", ".").replace("_", ".");
+        if (GENERIC_NAMES.contains(normalizedLocalPart)) {
+            firstName = GENERIC_LABEL;
         } else {
-            String[] nameParts = localPart.split("\\.");
+            String[] nameParts = normalizedLocalPart.split("\\.");
             if (nameParts.length == 1) {
                 firstName = capitalize(nameParts[0]);
             } else if (nameParts.length > 1) {
                 firstName = capitalize(nameParts[0]);
-                lastName = capitalize(nameParts[1]); // Taking first two parts
+                lastName = capitalize(nameParts[1]);
             }
         }
 
         // 2. Derive Company Name
         String[] domainSegments = domainPart.split("\\.");
         if (domainSegments.length > 1) {
-            String potentialCompany = domainSegments[domainSegments.length - 2]; // e.g., 'example' from 'example.com' or 'example.co.uk'
+            String potentialCompany = domainSegments[domainSegments.length - 2];
             if (!GENERIC_DOMAINS.contains(potentialCompany)) {
                 companyName = capitalize(potentialCompany);
+            } else {
+                companyName = GENERIC_LABEL;
             }
         }
 

@@ -1,7 +1,6 @@
 package com.shibashis.coldmailer.v1.models;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.shibashis.coldmailer.v1.models.enums.CampaignStatus;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Getter;
@@ -11,10 +10,10 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Entity
-@Table(name = "campaigns")
+@Table(name = "email_accounts")
 @Getter
 @Setter
-public class Campaign {
+public class EmailAccount {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -28,49 +27,50 @@ public class Campaign {
     @JsonIgnore
     private User user;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "email_account_id", nullable = false)
-    private EmailAccount emailAccount;
+    @NotBlank
+    @Column(nullable = false)
+    private String label;
 
     @NotBlank
     @Column(nullable = false)
-    private String name;
+    private String smtpHost;
+
+    @Column(nullable = false)
+    private Integer smtpPort;
 
     @NotBlank
     @Column(nullable = false)
-    private String subject;
+    private String smtpUsername;
 
     @NotBlank
-    @Column(nullable = false, columnDefinition = "TEXT")
-    private String templateBody;
+    @Column(nullable = false)
+    @JsonIgnore
+    private String smtpPassword;
+
+    @NotBlank
+    @Column(nullable = false)
+    private String fromEmail;
 
     @Column(nullable = false)
-    private boolean loadBalancedDispatch = false;
+    private boolean useTls = true;
 
-    private String resumeOriginalFileName;
-
-    private String resumeStoredFileName;
-
-    private String resumeContentType;
-
-    private LocalDateTime resumeUploadedAt;
-
-    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private CampaignStatus status;
+    private boolean isDefault = false;
+
+    @Column(nullable = false)
+    private boolean active = true;
+
+    private String suspensionReason;
+
+    private LocalDateTime suspendedAt;
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
-
-    private String processingDetails;
 
     @PrePersist
     public void onCreate() {
         if (tenantId == null && user != null) {
             tenantId = user.getTenantId();
-        }
-        if (status == null) {
-            status = CampaignStatus.DRAFT;
         }
         if (createdAt == null) {
             createdAt = LocalDateTime.now();
