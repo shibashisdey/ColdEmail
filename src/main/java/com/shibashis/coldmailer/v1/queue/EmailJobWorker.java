@@ -81,7 +81,11 @@ public class EmailJobWorker {
     @Scheduled(fixedDelayString = "${app.worker.poll-delay-ms:250}")
     public void consumeQueue() {
         Optional<EmailJobPayload> maybeJob = queueService.blockingPop(Duration.ofSeconds(2));
-        maybeJob.ifPresent(this::processJobSafely);
+        maybeJob.ifPresent(job -> {
+            logger.info("worker_dequeued campaignId={} campaignContactId={} trackingId={}",
+                    job.getCampaignId(), job.getCampaignContactId(), job.getTrackingId());
+            processJobSafely(job);
+        });
     }
 
     private void processJobSafely(EmailJobPayload job) {
@@ -119,6 +123,8 @@ public class EmailJobWorker {
         }
 
         Contact contact = campaignContact.getContact();
+        logger.info("worker_process_start campaignId={} campaignContactId={} recipient={} currentStatus={}",
+                campaign.getId(), campaignContact.getId(), contact.getEmail(), campaignContact.getStatus());
         Map<String, Object> vars = new HashMap<>();
         vars.put("firstName", contact.getFirstName());
         vars.put("lastName", contact.getLastName());
@@ -130,11 +136,18 @@ public class EmailJobWorker {
         vars.put("resumeUrl", baseUrl + "/api/track/resume/" + campaignContact.getTrackingId());
 
         String renderedBody = templateRenderer.render(campaign.getTemplateBody(), vars);
+        String footer = "<hr style='margin-top:24px;border:none;border-top:1px solid #d9d9d9;'/>"
+                + "<p style='font-size:12px;color:#666;'>This email was sent using "
+                + "<a href='" + baseUrl + "' target='_blank' rel='noopener noreferrer'>Cold Email App</a>."
+                + "<br/>Please email back to this email: " + campaign.getUser().getEmail() + "</p>";
         String bodyWithTrackingPixel = renderedBody
+                + footer
                 + "<img src='" + baseUrl + "/api/track/open/" + campaignContact.getTrackingId()
                 + "' width='1' height='1' style='display:none;'/>";
 
         var selectedAccount = emailAccountRoutingService.resolveAccount(campaign);
+        logger.info("worker_selected_account campaignId={} campaignContactId={} smtpAccountId={} smtpHost={} fromEmail={}",
+                campaign.getId(), campaignContact.getId(), selectedAccount.getId(), selectedAccount.getSmtpHost(), selectedAccount.getFromEmail());
         try {
             emailSenderService.sendHtmlMessage(selectedAccount, contact.getEmail(), campaign.getSubject(), bodyWithTrackingPixel);
             campaignContact.setStatus(CampaignContactStatus.SENT);

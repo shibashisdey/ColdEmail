@@ -3,6 +3,7 @@ package com.shibashis.coldmailer.v1.controllers;
 import com.shibashis.coldmailer.v1.dto.CampaignCreateRequest;
 import com.shibashis.coldmailer.v1.dto.CampaignStatsDTO;
 import com.shibashis.coldmailer.v1.dto.campaign.CampaignContactView;
+import com.shibashis.coldmailer.v1.dto.campaign.ManualCampaignContactRequest;
 import com.shibashis.coldmailer.v1.dto.campaign.CampaignProgressDTO;
 import com.shibashis.coldmailer.v1.models.Campaign;
 import com.shibashis.coldmailer.v1.services.CampaignService;
@@ -48,6 +49,12 @@ public class CampaignController {
                                                  @RequestParam("file") MultipartFile file) {
         Campaign updated = campaignService.uploadResume(id, file);
         return ResponseEntity.ok(updated);
+    }
+
+    @PostMapping("/{id}/contacts")
+    public ResponseEntity<CampaignContactView> addContact(@PathVariable Long id,
+                                                          @Valid @RequestBody ManualCampaignContactRequest request) {
+        return new ResponseEntity<>(campaignService.addManualContact(id, request), HttpStatus.CREATED);
     }
 
     @GetMapping("/{id}/contacts")

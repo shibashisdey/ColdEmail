@@ -3,6 +3,7 @@ package com.shibashis.coldmailer.v1.services;
 import com.shibashis.coldmailer.v1.dto.CampaignCreateRequest;
 import com.shibashis.coldmailer.v1.dto.CampaignStatsDTO;
 import com.shibashis.coldmailer.v1.dto.campaign.CampaignContactView;
+import com.shibashis.coldmailer.v1.dto.campaign.ManualCampaignContactRequest;
 import com.shibashis.coldmailer.v1.dto.campaign.CampaignProgressDTO;
 import com.shibashis.coldmailer.v1.models.Campaign;
 import com.shibashis.coldmailer.v1.models.CampaignContact;
@@ -29,6 +30,7 @@ public class CampaignService {
     private final CampaignDispatchService campaignDispatchService;
     private final CampaignProgressService campaignProgressService;
     private final CampaignResumeService campaignResumeService;
+    private final SystemEmailAccountService systemEmailAccountService;
 
     public CampaignService(CampaignRepository campaignRepository,
                            CampaignContactRepository campaignContactRepository,
@@ -36,7 +38,8 @@ public class CampaignService {
                            CampaignContactImportService campaignContactImportService,
                            CampaignDispatchService campaignDispatchService,
                            CampaignProgressService campaignProgressService,
-                           CampaignResumeService campaignResumeService) {
+                           CampaignResumeService campaignResumeService,
+                           SystemEmailAccountService systemEmailAccountService) {
         this.campaignRepository = campaignRepository;
         this.campaignContactRepository = campaignContactRepository;
         this.campaignAccessService = campaignAccessService;
@@ -44,6 +47,7 @@ public class CampaignService {
         this.campaignDispatchService = campaignDispatchService;
         this.campaignProgressService = campaignProgressService;
         this.campaignResumeService = campaignResumeService;
+        this.systemEmailAccountService = systemEmailAccountService;
     }
 
     public List<Campaign> listMyCampaigns() {
@@ -53,7 +57,9 @@ public class CampaignService {
     @Transactional
     public Campaign createCampaign(CampaignCreateRequest request) {
         User user = campaignAccessService.currentUser();
-        EmailAccount emailAccount = campaignAccessService.getMyEmailAccount(request.getEmailAccountId());
+        EmailAccount emailAccount = request.getEmailAccountId() != null
+                ? campaignAccessService.getMyEmailAccount(request.getEmailAccountId())
+                : systemEmailAccountService.ensureSystemAccount(user);
 
         Campaign campaign = new Campaign();
         campaign.setUser(user);
@@ -78,6 +84,28 @@ public class CampaignService {
         Campaign campaign = campaignAccessService.getMyCampaign(campaignId);
         campaignResumeService.attachResume(campaign, file);
         return campaignRepository.save(campaign);
+    }
+
+    @Transactional
+    public CampaignContactView addManualContact(Long campaignId, ManualCampaignContactRequest request) {
+        Campaign campaign = campaignAccessService.getMyCampaign(campaignId);
+        User user = campaignAccessService.currentUser();
+        CampaignContact campaignContact = campaignContactImportService.addManualContact(campaign, user, request);
+        Contact contact = campaignContact.getContact();
+        return new CampaignContactView(
+                campaignContact.getId(),
+                contact.getEmail(),
+                contact.getFirstName(),
+                contact.getLastName(),
+                contact.getCompany(),
+                campaignContact.getStatus(),
+                campaignContact.getTrackingId(),
+                campaignContact.getSentAt(),
+                campaignContact.getOpenedAt(),
+                campaignContact.getResumeDownloadedAt(),
+                campaignContact.getFailureReason(),
+                campaignContact.getRetryCount()
+        );
     }
 
     @Transactional

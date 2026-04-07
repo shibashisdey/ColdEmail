@@ -30,6 +30,7 @@ public class Campaign {
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "email_account_id", nullable = false)
+    @JsonIgnore
     private EmailAccount emailAccount;
 
     @NotBlank

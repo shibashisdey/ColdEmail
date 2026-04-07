@@ -1,7 +1,6 @@
 package com.shibashis.coldmailer.v1.dto;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -18,7 +17,6 @@ public class CampaignCreateRequest {
     @NotBlank
     private String templateBody;
 
-    @NotNull
     private Long emailAccountId;
 
     private boolean loadBalancedDispatch = false;

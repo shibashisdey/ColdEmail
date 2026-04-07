@@ -1,6 +1,7 @@
 package com.shibashis.coldmailer.v1.services;
 
 import com.shibashis.coldmailer.v1.dto.ProspectData;
+import com.shibashis.coldmailer.v1.dto.campaign.ManualCampaignContactRequest;
 import com.shibashis.coldmailer.v1.models.Campaign;
 import com.shibashis.coldmailer.v1.models.CampaignContact;
 import com.shibashis.coldmailer.v1.models.Contact;
@@ -88,25 +89,33 @@ public class CampaignContactImportService {
                 String normalizedEmail = email.trim().toLowerCase(Locale.ROOT);
                 Contact contact = contactRepository.findByTenantIdAndEmail(user.getTenantId(), normalizedEmail)
                         .orElseGet(() -> buildContactFromCsv(user, record, normalizedEmail));
-                contact = contactRepository.save(contact);
-
-                if (!existingContactIds.contains(contact.getId())) {
-                    if (existingContactIds.size() >= maxContactsPolicy) {
-                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Campaign contact limit reached");
-                    }
-                    CampaignContact campaignContact = new CampaignContact();
-                    campaignContact.setCampaign(campaign);
-                    campaignContact.setContact(contact);
-                    campaignContact.setStatus(CampaignContactStatus.PENDING);
-                    campaignContactRepository.save(campaignContact);
-                    existingContactIds.add(contact.getId());
-                    created++;
-                }
+                created += attachContactIfEligible(campaign, user, contact, existingContactIds, maxContactsPolicy);
             }
             return created;
         } catch (IOException ex) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Failed to parse CSV: " + ex.getMessage());
         }
+    }
+
+    @Transactional
+    public CampaignContact addManualContact(Campaign campaign, User user, ManualCampaignContactRequest request) {
+        validateMutableCampaign(campaign);
+        long maxContactsPolicy = platformPolicyService.getLong(PlatformPolicyService.MAX_CONTACTS_PER_CAMPAIGN, 10000);
+        Set<Long> existingContactIds = existingContactIds(campaign);
+
+        String normalizedEmail = request.getEmail().trim().toLowerCase(Locale.ROOT);
+        Contact contact = contactRepository.findByTenantIdAndEmail(user.getTenantId(), normalizedEmail)
+                .orElseGet(() -> buildContactFromManualRequest(user, request, normalizedEmail));
+
+        int created = attachContactIfEligible(campaign, user, contact, existingContactIds, maxContactsPolicy);
+        if (created == 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Contact already exists in campaign");
+        }
+
+        return campaignContactRepository.findByCampaignIdOrderByIdAsc(campaign.getId()).stream()
+                .filter(campaignContact -> campaignContact.getContact().getId().equals(contact.getId()))
+                .findFirst()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to create campaign contact"));
     }
 
     private Contact buildContactFromCsv(User user, CSVRecord record, String email) {
@@ -140,6 +149,60 @@ public class CampaignContactImportService {
         return contact;
     }
 
+    private Contact buildContactFromManualRequest(User user, ManualCampaignContactRequest request, String email) {
+        ProspectData derived = prospectDerivationService.deriveFromEmail(email);
+
+        String firstName = firstNonBlank(derived.getFirstName(), request.getFirstName(), "Generic");
+        String lastName = firstNonBlank(derived.getLastName(), request.getLastName());
+        String company = firstNonBlank(derived.getCompanyName(), request.getCompany());
+
+        Contact contact = new Contact();
+        contact.setUser(user);
+        contact.setEmail(email);
+        contact.setFirstName(firstName);
+        contact.setLastName(blankToNull(lastName));
+        contact.setCompany(blankToNull(company));
+        return contact;
+    }
+
+    private int attachContactIfEligible(Campaign campaign,
+                                        User user,
+                                        Contact contact,
+                                        Set<Long> existingContactIds,
+                                        long maxContactsPolicy) {
+        validateMutableCampaign(campaign);
+        Contact savedContact = contactRepository.save(contact);
+
+        if (existingContactIds.contains(savedContact.getId())) {
+            return 0;
+        }
+        if (existingContactIds.size() >= maxContactsPolicy) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Campaign contact limit reached");
+        }
+
+        CampaignContact campaignContact = new CampaignContact();
+        campaignContact.setCampaign(campaign);
+        campaignContact.setContact(savedContact);
+        campaignContact.setStatus(CampaignContactStatus.PENDING);
+        campaignContactRepository.save(campaignContact);
+        existingContactIds.add(savedContact.getId());
+        return 1;
+    }
+
+    private Set<Long> existingContactIds(Campaign campaign) {
+        Set<Long> existingContactIds = new HashSet<>();
+        for (CampaignContact existing : campaignContactRepository.findByCampaignIdOrderByIdAsc(campaign.getId())) {
+            existingContactIds.add(existing.getContact().getId());
+        }
+        return existingContactIds;
+    }
+
+    private void validateMutableCampaign(Campaign campaign) {
+        if (campaign.getStatus() != CampaignStatus.DRAFT && campaign.getStatus() != CampaignStatus.PAUSED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Contacts can only be uploaded in DRAFT or PAUSED state");
+        }
+    }
+
     private String getColumn(CSVRecord record, String key) {
         if (record.isMapped(key)) {
             return record.get(key);
@@ -156,5 +219,14 @@ public class CampaignContactImportService {
             return null;
         }
         return value.trim();
+    }
+
+    private String firstNonBlank(String... candidates) {
+        for (String candidate : candidates) {
+            if (!isBlank(candidate)) {
+                return candidate.trim();
+            }
+        }
+        return null;
     }
 }

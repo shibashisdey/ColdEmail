@@ -6,6 +6,8 @@ import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
@@ -14,6 +16,8 @@ import java.util.Properties;
 
 @Service
 public class EmailService implements EmailSenderService {
+
+    private static final Logger logger = LoggerFactory.getLogger(EmailService.class);
 
     private final CircuitBreakerRegistry circuitBreakerRegistry;
 
@@ -43,6 +47,9 @@ public class EmailService implements EmailSenderService {
     }
 
     private void doSend(EmailAccount account, String to, String subject, String htmlBody) throws MessagingException {
+        logger.info("smtp_send_attempt smtpAccountId={} host={} port={} username={} from={} to={} subject={}",
+                account.getId(), account.getSmtpHost(), account.getSmtpPort(), account.getSmtpUsername(),
+                account.getFromEmail(), to, subject);
         JavaMailSenderImpl sender = buildSender(account);
         MimeMessage mimeMessage = sender.createMimeMessage();
         MimeMessageHelper helper = new MimeMessageHelper(mimeMessage, "UTF-8");

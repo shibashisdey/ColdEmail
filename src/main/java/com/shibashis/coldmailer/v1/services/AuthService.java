@@ -21,15 +21,18 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
     private final JwtService jwtService;
+    private final SystemEmailAccountService systemEmailAccountService;
 
     public AuthService(UserRepository userRepository,
                        PasswordEncoder passwordEncoder,
                        AuthenticationManager authenticationManager,
-                       JwtService jwtService) {
+                       JwtService jwtService,
+                       SystemEmailAccountService systemEmailAccountService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.authenticationManager = authenticationManager;
         this.jwtService = jwtService;
+        this.systemEmailAccountService = systemEmailAccountService;
     }
 
     public AuthResponse register(RegisterRequest request) {
@@ -43,6 +46,7 @@ public class AuthService {
         user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
 
         User saved = userRepository.save(user);
+        systemEmailAccountService.ensureSystemAccount(saved);
         UserPrincipal principal = new UserPrincipal(saved);
         String token = jwtService.generateToken(principal);
 
@@ -60,6 +64,7 @@ public class AuthService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is suspended");
         }
 
+        systemEmailAccountService.ensureSystemAccount(user);
         UserPrincipal principal = new UserPrincipal(user);
         String token = jwtService.generateToken(principal);
 
